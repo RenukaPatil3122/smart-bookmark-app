@@ -21,7 +21,7 @@ export default function BookmarkList({
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const pendingRef = useRef<Set<string>>(new Set());
+  const isInserting = useRef(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -36,16 +36,13 @@ export default function BookmarkList({
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
+          // Skip if WE are the ones inserting (optimistic already handles it)
+          if (isInserting.current) return;
           const b = payload.new as Bookmark;
-          const key = `${b.title}||${b.url}`;
-          if (pendingRef.current.has(key)) {
-            pendingRef.current.delete(key);
-            setBookmarks((prev) =>
-              prev.map((x) => (x.title === b.title && x.url === b.url ? b : x)),
-            );
-          } else {
-            setBookmarks((prev) => [b, ...prev]);
-          }
+          setBookmarks((prev) => {
+            if (prev.find((x) => x.id === b.id)) return prev;
+            return [b, ...prev];
+          });
         },
       )
       .on(
@@ -62,7 +59,7 @@ export default function BookmarkList({
           );
         },
       )
-      .subscribe((status) => console.log("Realtime status:", status));
+      .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
@@ -72,11 +69,10 @@ export default function BookmarkList({
     e.preventDefault();
     if (!title || !url) return;
     setLoading(true);
+    isInserting.current = true;
 
     const supabase = createClient();
     const finalUrl = url.startsWith("http") ? url : `https://${url}`;
-    const pendingKey = `${title}||${finalUrl}`;
-    pendingRef.current.add(pendingKey);
 
     const optimisticBookmark: Bookmark = {
       id: crypto.randomUUID(),
@@ -96,7 +92,6 @@ export default function BookmarkList({
       .single();
 
     if (error) {
-      pendingRef.current.delete(pendingKey);
       setBookmarks((prev) =>
         prev.filter((b) => b.id !== optimisticBookmark.id),
       );
@@ -106,6 +101,10 @@ export default function BookmarkList({
       );
     }
 
+    // Small delay before re-enabling so realtime event is ignored
+    setTimeout(() => {
+      isInserting.current = false;
+    }, 3000);
     setLoading(false);
   };
 
