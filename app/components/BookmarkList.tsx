@@ -21,47 +21,24 @@ export default function BookmarkList({
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const isInserting = useRef(false);
+  const bc = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("bookmarks-realtime-" + userId)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "bookmarks",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          // Skip if WE are the ones inserting (optimistic already handles it)
-          if (isInserting.current) return;
-          const b = payload.new as Bookmark;
-          setBookmarks((prev) => {
-            if (prev.find((x) => x.id === b.id)) return prev;
-            return [b, ...prev];
-          });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "bookmarks",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          setBookmarks((prev) =>
-            prev.filter((b) => b.id !== (payload.old as Bookmark).id),
-          );
-        },
-      )
-      .subscribe();
+    // BroadcastChannel for cross-tab sync
+    bc.current = new BroadcastChannel("bookmarks-" + userId);
+    bc.current.onmessage = (e) => {
+      if (e.data.type === "INSERT") {
+        setBookmarks((prev) => {
+          if (prev.find((x) => x.id === e.data.bookmark.id)) return prev;
+          return [e.data.bookmark, ...prev];
+        });
+      }
+      if (e.data.type === "DELETE") {
+        setBookmarks((prev) => prev.filter((b) => b.id !== e.data.id));
+      }
+    };
     return () => {
-      supabase.removeChannel(channel);
+      bc.current?.close();
     };
   }, [userId]);
 
@@ -69,7 +46,6 @@ export default function BookmarkList({
     e.preventDefault();
     if (!title || !url) return;
     setLoading(true);
-    isInserting.current = true;
 
     const supabase = createClient();
     const finalUrl = url.startsWith("http") ? url : `https://${url}`;
@@ -99,12 +75,10 @@ export default function BookmarkList({
       setBookmarks((prev) =>
         prev.map((b) => (b.id === optimisticBookmark.id ? data : b)),
       );
+      // Tell other tabs
+      bc.current?.postMessage({ type: "INSERT", bookmark: data });
     }
 
-    // Small delay before re-enabling so realtime event is ignored
-    setTimeout(() => {
-      isInserting.current = false;
-    }, 3000);
     setLoading(false);
   };
 
@@ -112,6 +86,7 @@ export default function BookmarkList({
     setBookmarks((prev) => prev.filter((b) => b.id !== id));
     const supabase = createClient();
     await supabase.from("bookmarks").delete().eq("id", id);
+    bc.current?.postMessage({ type: "DELETE", id });
   };
 
   return (
