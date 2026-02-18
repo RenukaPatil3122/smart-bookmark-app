@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type Bookmark = {
@@ -21,6 +21,7 @@ export default function BookmarkList({
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const pendingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const supabase = createClient();
@@ -36,23 +37,15 @@ export default function BookmarkList({
         },
         (payload) => {
           const b = payload.new as Bookmark;
-          setBookmarks((prev) => {
-            const isDuplicate = prev.find(
-              (x) =>
-                x.title === b.title &&
-                x.url === b.url &&
-                Math.abs(
-                  new Date(x.created_at).getTime() -
-                    new Date(b.created_at).getTime(),
-                ) < 5000,
+          const key = `${b.title}||${b.url}`;
+          if (pendingRef.current.has(key)) {
+            pendingRef.current.delete(key);
+            setBookmarks((prev) =>
+              prev.map((x) => (x.title === b.title && x.url === b.url ? b : x)),
             );
-            if (isDuplicate) {
-              return prev.map((x) =>
-                x.title === b.title && x.url === b.url ? b : x,
-              );
-            }
-            return [b, ...prev];
-          });
+          } else {
+            setBookmarks((prev) => [b, ...prev]);
+          }
         },
       )
       .on(
@@ -82,8 +75,9 @@ export default function BookmarkList({
 
     const supabase = createClient();
     const finalUrl = url.startsWith("http") ? url : `https://${url}`;
+    const pendingKey = `${title}||${finalUrl}`;
+    pendingRef.current.add(pendingKey);
 
-    // Optimistic update
     const optimisticBookmark: Bookmark = {
       id: crypto.randomUUID(),
       title,
@@ -97,21 +91,16 @@ export default function BookmarkList({
 
     const { data, error } = await supabase
       .from("bookmarks")
-      .insert({
-        title,
-        url: finalUrl,
-        user_id: userId,
-      })
+      .insert({ title, url: finalUrl, user_id: userId })
       .select()
       .single();
 
     if (error) {
-      // Rollback on error
+      pendingRef.current.delete(pendingKey);
       setBookmarks((prev) =>
         prev.filter((b) => b.id !== optimisticBookmark.id),
       );
     } else if (data) {
-      // Replace optimistic with real
       setBookmarks((prev) =>
         prev.map((b) => (b.id === optimisticBookmark.id ? data : b)),
       );
@@ -121,7 +110,7 @@ export default function BookmarkList({
   };
 
   const handleDelete = async (id: string) => {
-    setBookmarks((prev) => prev.filter((b) => b.id !== id)); // optimistic
+    setBookmarks((prev) => prev.filter((b) => b.id !== id));
     const supabase = createClient();
     await supabase.from("bookmarks").delete().eq("id", id);
   };
