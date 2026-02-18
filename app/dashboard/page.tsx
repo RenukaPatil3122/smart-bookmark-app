@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import BookmarkList from "../components/BookmarkList";
-import AddBookmark from "../components/AddBookmark";
 import LogoutButton from "../components/LogoutButton";
 
 export default async function Dashboard() {
@@ -27,7 +26,6 @@ export default async function Dashboard() {
           </div>
           <LogoutButton />
         </div>
-        <AddBookmark />
         <BookmarkList initialBookmarks={bookmarks || []} userId={user.id} />
       </div>
     </main>
