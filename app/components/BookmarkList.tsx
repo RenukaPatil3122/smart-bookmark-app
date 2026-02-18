@@ -37,7 +37,20 @@ export default function BookmarkList({
         (payload) => {
           const b = payload.new as Bookmark;
           setBookmarks((prev) => {
-            if (prev.find((x) => x.id === b.id)) return prev; // avoid duplicate from optimistic
+            const isDuplicate = prev.find(
+              (x) =>
+                x.title === b.title &&
+                x.url === b.url &&
+                Math.abs(
+                  new Date(x.created_at).getTime() -
+                    new Date(b.created_at).getTime(),
+                ) < 5000,
+            );
+            if (isDuplicate) {
+              return prev.map((x) =>
+                x.title === b.title && x.url === b.url ? b : x,
+              );
+            }
             return [b, ...prev];
           });
         },
